@@ -61,9 +61,9 @@ class AccountPayment(models.Model):
         for rec in self.filtered('check_id'):
             rec.amount = rec.check_id.amount
 
-    @api.depends('payment_method_line_id.code', 'partner_id')
+    @api.depends('payment_method_id.code', 'partner_id')
     def _compute_third_check_data(self):
-        new_third_checks = self.filtered(lambda x: x.payment_method_line_id.code == 'new_third_checks')
+        new_third_checks = self.filtered(lambda x: x.payment_method_id.code == 'new_third_checks')
         # (self - new_third_checks).update({'third_check_bank_id': False, 'third_check_issuer_vat': False, 'third_check_issue_date': False})
         for rec in new_third_checks:
             rec.update({
@@ -72,18 +72,18 @@ class AccountPayment(models.Model):
                 'third_check_issue_date': fields.Date.context_today(rec),
             })
 
-    @api.depends('third_check_issuer_vat', 'payment_method_line_id.code', 'partner_id')
+    @api.depends('third_check_issuer_vat', 'payment_method_id.code', 'partner_id')
     def _compute_third_check_issuer_name(self):
         """ We suggest owner name from owner vat """
-        new_third_checks = self.filtered(lambda x: x.payment_method_line_id.code == 'new_third_checks')
+        new_third_checks = self.filtered(lambda x: x.payment_method_id.code == 'new_third_checks')
         # (self - new_third_checks).third_check_issuer_name = False
         for rec in new_third_checks:
             rec.third_check_issuer_name = rec.third_check_issuer_vat and self.search(
                 [('third_check_issuer_vat', '=', rec.third_check_issuer_vat)], limit=1).third_check_issuer_name or rec.partner_id.name
 
-    @api.depends('payment_method_line_id.code', 'is_internal_transfer', 'destination_journal_id')
+    @api.depends('payment_method_id.code', 'is_internal_transfer', 'journal_id')
     def _compute_third_check_from_state(self):
-        moved_third_checks = self.filtered(lambda x: x.payment_method_line_id.code in ['in_third_checks', 'out_third_checks'])
+        moved_third_checks = self.filtered(lambda x: x.payment_method_id.code in ['in_third_checks', 'out_third_checks'])
         (self - moved_third_checks).third_check_from_state = False
         for rec in moved_third_checks:
             from_state, to_state = rec._get_checks_states()
@@ -96,9 +96,9 @@ class AccountPayment(models.Model):
             if rec.third_check_issue_date and rec.check_payment_date and rec.third_check_issue_date > rec.check_payment_date:
                 raise UserError(_('Check Payment Date must be greater than Issue Date'))
 
-    @api.constrains('payment_method_line_id', 'third_check_issuer_vat', 'third_check_bank_id', 'company_id', 'check_number')
+    @api.constrains('payment_method_id', 'third_check_issuer_vat', 'third_check_bank_id', 'company_id', 'check_number')
     def _check_unique(self):
-        for rec in self.filtered(lambda x: x.check_number and x.payment_method_line_id.code == 'new_third_checks'):
+        for rec in self.filtered(lambda x: x.check_number and x.payment_method_id.code == 'new_third_checks'):
             same_checks = self.search([
                 ('company_id', '=', rec.company_id.id),
                 ('third_check_bank_id', '=', rec.third_check_bank_id.id),
@@ -113,7 +113,7 @@ class AccountPayment(models.Model):
 
     def _get_checks_states(self):
         return self._get_checks_states_model(
-            self.payment_method_code, self.payment_type, self.is_internal_transfer, self.destination_journal_id)
+            self.payment_method_code, self.payment_type, self.is_internal_transfer, self.journal_id)
 
     @api.model
     def _get_checks_states_model(self, payment_method_code, payment_type, is_internal_transfer, destination_journal=None):
@@ -127,7 +127,7 @@ class AccountPayment(models.Model):
             if not destination_journal:
                 return False, False
             if payment_type == 'outbound':
-                if destination_journal and any(x.code == 'in_third_checks' for x in destination_journal.inbound_payment_method_line_ids):
+                if destination_journal and any(x.code == 'in_third_checks' for x in destination_journal.inbound_payment_method_ids):
                     # transferencia a otro diario de terceros
                     # TODO implementar el movimiento entre diarios de cheques de terceros con dos operations?
                     return 'holding', 'holding'
@@ -135,7 +135,7 @@ class AccountPayment(models.Model):
                     # deposito o venta
                     return 'holding', 'deposited'
             elif payment_type == 'inbound':
-                if destination_journal and any(x.code == 'out_third_checks' for x in destination_journal.inbound_payment_method_line_ids):
+                if destination_journal and any(x.code == 'out_third_checks' for x in destination_journal.inbound_payment_method_ids):
                     # transferencia a otro diario de terceros
                     # TODO implementar el movimiento entre diarios de cheques de terceros con dos operations?
                     return 'holding', 'holding'
@@ -150,7 +150,7 @@ class AccountPayment(models.Model):
         elif payment_method_code == 'in_third_checks':
             return 'delivered', 'holding'
 
-    @api.onchange('payment_method_line_id', 'is_internal_transfer', 'journal_id', 'destination_journal_id')
+    @api.onchange('payment_method_id', 'is_internal_transfer', 'journal_id', 'journal_id')
     def reset_check_ids(self):
         self.check_id = False
 
@@ -163,9 +163,9 @@ class AccountPayment(models.Model):
             except Exception:
                 pass
 
-    @api.depends('third_check_operation_ids.journal_id', 'third_check_operation_ids.state', 'payment_method_line_id')
+    @api.depends('third_check_operation_ids.journal_id', 'third_check_operation_ids.state', 'payment_method_id')
     def _compute_third_check_last_journal(self):
-        new_checks = self.filtered(lambda x: x.payment_method_line_id.code == 'new_third_checks')
+        new_checks = self.filtered(lambda x: x.payment_method_id.code == 'new_third_checks')
         for rec in new_checks:
             third_check_operation = rec.third_check_operation_ids.filtered(lambda x: x.state == 'posted')
             if not third_check_operation:
@@ -178,7 +178,7 @@ class AccountPayment(models.Model):
         check operations (handed, delivered, etc) """
         res = super(AccountPayment, self).action_post()
         # for rec in self.filtered('check_id'):
-        for rec in self.filtered(lambda x: x.payment_method_line_id.code == 'new_third_checks'):
+        for rec in self.filtered(lambda x: x.payment_method_id.code == 'new_third_checks'):
             rec.check_id = rec.id
         # for rec in self.filtered('check_id'):
         #     if not rec.currency_id.is_zero(rec.check_id.amount - rec.amount):
@@ -250,7 +250,7 @@ class AccountPayment(models.Model):
     def _prepare_move_line_default_vals(self, write_off_line_vals=None):
         """ Add check name and operation on liquidity line """
         res = super()._prepare_move_line_default_vals(write_off_line_vals=write_off_line_vals)
-        check = self if self.payment_method_line_id.code == 'new_third_checks' else self.check_id
+        check = self if self.payment_method_id.code == 'new_third_checks' else self.check_id
         if check:
             from_state, to_state = self._get_checks_states()
             document_name = _('Check %s %s') % (check.check_number, to_state)
@@ -304,13 +304,13 @@ class AccountPayment(models.Model):
         return action
 
     def _create_paired_internal_transfer_payment(self):
-        for rec in self.filtered(lambda x: x.payment_method_line_id.code in ['in_third_checks', 'out_third_checks']):
+        for rec in self.filtered(lambda x: x.payment_method_id.code in ['in_third_checks', 'out_third_checks']):
             destionation_payment_method_code = 'in_third_checks' if rec.payment_type == 'outbound' else 'out_third_checks'
-            destination_payment_method = rec.destination_journal_id.inbound_payment_method_line_ids.filtered(lambda x: x.code == destionation_payment_method_code)
+            destination_payment_method = rec.journal_id.inbound_payment_method_ids.filtered(lambda x: x.code == destionation_payment_method_code)
             if destination_payment_method:
                 # If we're making a transfer between third checks journal, select third check method and journal on destination transfer
                 super(AccountPayment, rec.with_context(
-                    default_check_id=rec.check_id, default_payment_method_line_id=destination_payment_method.id))._create_paired_internal_transfer_payment()
+                    default_check_id=rec.check_id, default_payment_method_id=destination_payment_method.id))._create_paired_internal_transfer_payment()
             else:
                 # if it's check move we add a reference on ref field for statements and also to make it more understandable
                 super(AccountPayment, rec)._create_paired_internal_transfer_payment()
