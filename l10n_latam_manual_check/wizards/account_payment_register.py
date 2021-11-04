@@ -18,6 +18,9 @@ class AccountPaymentRegister(models.TransientModel):
         help="The selected journal is configured to print check numbers. If your pre-printed check paper already has numbers "
              "or if the current numbering is wrong, you can change it in the journal configuration page.",
     )
+    payment_method_code = fields.Char(
+        related='payment_method_line_id.code',
+        help="Technical field used to adapt the interface to the payment type selected.")
     use_checkbooks = fields.Boolean(related='journal_id.use_checkbooks')
     # payment_method_id = fields.Many2one(index=True)
     checkbook_type = fields.Selection(related='checkbook_id.type')
@@ -25,9 +28,9 @@ class AccountPaymentRegister(models.TransientModel):
     check_payment_date = fields.Date()
     check_printing_type = fields.Selection(related='checkbook_id.check_printing_type')
 
-    @api.depends('journal_id.use_checkbooks')
+    @api.depends('payment_method_line_id.code', 'journal_id.use_checkbooks')
     def _compute_checkbook(self):
-        with_checkbooks = self.filtered(lambda x: x.journal_id.use_checkbooks)
+        with_checkbooks = self.filtered(lambda x: x.payment_method_line_id.code == 'check_printing' and x.journal_id.use_checkbooks)
         (self - with_checkbooks).checkbook_id = False
         for rec in with_checkbooks:
             checkbook = rec.journal_id.with_context(active_test=True).checkbook_ids
@@ -42,10 +45,10 @@ class AccountPaymentRegister(models.TransientModel):
         })
         return vals
 
-    @api.depends('journal_id', 'checkbook_id')
+    @api.depends('journal_id', 'payment_method_code', 'checkbook_id')
     def _compute_check_number(self):
         for pay in self:
-            if pay.journal_id.check_manual_sequencing:
+            if pay.journal_id.check_manual_sequencing and pay.payment_method_code == 'check_printing':
                 sequence = pay.journal_id.check_sequence_id
                 pay.check_number = sequence.get_next_char(sequence.number_next_actual)
             elif pay.checkbook_id.check_printing_type == 'no_print':

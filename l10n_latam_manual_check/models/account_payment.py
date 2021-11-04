@@ -27,9 +27,9 @@ class AccountPayment(models.Model):
         readonly=False,
     )
 
-    @api.depends('journal_id.use_checkbooks')
+    @api.depends('payment_method_line_id.code', 'journal_id.use_checkbooks')
     def _compute_checkbook(self):
-        with_checkbooks = self.filtered(lambda x: x.journal_id.use_checkbooks)
+        with_checkbooks = self.filtered(lambda x: x.payment_method_line_id.code == 'check_printing' and x.journal_id.use_checkbooks)
         (self - with_checkbooks).checkbook_id = False
         for rec in with_checkbooks:
             checkbooks = rec.journal_id.with_context(active_test=True).checkbook_ids
@@ -37,6 +37,7 @@ class AccountPayment(models.Model):
                 continue
             rec.checkbook_id = checkbooks and checkbooks[0] or False
 
+    # @api.depends('journal_id', 'payment_method_code')
     @api.depends('checkbook_id')
     def _compute_check_number(self):
         no_print_checkbooks = self.filtered(lambda x: x.checkbook_id.check_printing_type == 'no_print')
@@ -44,8 +45,8 @@ class AccountPayment(models.Model):
             pay.check_number = pay.checkbook_id.sequence_id.get_next_char(pay.checkbook_id.next_number)
         return super(AccountPayment, self - no_print_checkbooks)._compute_check_number()
 
-    def post(self):
-        res = super().post()
+    def action_post(self):
+        res = super().action_post()
         # mark checks that are not printed as sent
         for payment in self.filtered(lambda x: x.checkbook_id.check_printing_type == 'no_print' and x.check_number):
             sequence = payment.checkbook_id.sequence_id
@@ -60,7 +61,7 @@ class AccountPayment(models.Model):
 
     @api.constrains('journal_id', 'check_number', 'checkbook_id')
     def _check_unique(self):
-        for rec in self.filtered(lambda x: x.check_number):
+        for rec in self.filtered(lambda x: x.payment_method_line_id.code == 'check_printing' and x.check_number):
             same_checks = self.search([
                 ('checkbook_id', '=', rec.checkbook_id.id),
                 ('journal_id', '=', rec.journal_id.id),
@@ -75,6 +76,6 @@ class AccountPayment(models.Model):
     def _prepare_move_line_default_vals(self, write_off_line_vals=None):
         """ Add check maturity date """
         res = super()._prepare_move_line_default_vals(write_off_line_vals=write_off_line_vals)
-        if self.check_payment_date:
+        if self.payment_method_line_id.code == 'check_printing' and self.check_payment_date:
             res[0].update({'date_maturity': self.check_payment_date})
         return res
